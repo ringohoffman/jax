@@ -54,6 +54,7 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
+from jax._src import stages
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
@@ -167,7 +168,7 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  compiler_options: dict[str, Any] | None = ...,
+  compiler_options: stages.CompilerOptions | None = ...,
 ) -> pjit.JitWrapped:
   ...
 
@@ -184,7 +185,7 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  compiler_options: dict[str, Any] | None = ...,
+  compiler_options: stages.CompilerOptions | None = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]:
   ...
 
@@ -200,7 +201,7 @@ def jit(
   device: xc.Device | None = None,
   backend: str | None = None,
   inline: bool = False,
-  compiler_options: dict[str, Any] | None = None,
+  compiler_options: stages.CompilerOptions | None = None,
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 

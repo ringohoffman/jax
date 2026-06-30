@@ -336,7 +336,7 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
                          donate_argnames: str | Iterable[str] | None,
                          keep_unused: bool, device: xc.Device | None,
                          backend: str | None, inline: bool,
-                         compiler_options: dict[str, Any] | None,
+                         compiler_options: stages.CompilerOptions | None,
                          use_resource_env: bool) -> PjitInfo:
   """Parses the arguments to jit/pjit.
 
@@ -424,7 +424,7 @@ def make_jit(fun: Callable,
              device: xc.Device | None,
              backend: str | None,
              inline: bool,
-             compiler_options: dict[str, Any] | None,
+             compiler_options: stages.CompilerOptions | None,
              use_resource_env: bool) -> Any:
   """jit() and pjit() are thin wrappers around this function."""
   jit_info = _parse_jit_arguments(
@@ -680,7 +680,7 @@ def pjit(
     device: xc.Device | None = None,
     backend: str | None = None,
     inline: bool = False,
-    compiler_options: dict[str, Any] | None = None,
+    compiler_options: stages.CompilerOptions | None = None,
 ) -> JitWrapped:
   """`jax.experimental.pjit.pjit` has been deprecated. Please use `jax.jit`."""
   return make_jit(

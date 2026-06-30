@@ -35,7 +35,7 @@ import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
 import itertools as it
-from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
+from typing import Any, NamedTuple, Protocol, TypedDict, Union, runtime_checkable
 
 from jax._src import core
 from jax._src import config
@@ -60,7 +60,42 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, Union[str, bool]]
+class CompilerOptions(TypedDict, total=False):
+  """Compiler options passed to ``jax.jit`` and ``Lowered.compile``.
+
+  These options are forwarded as ``CompileOptions.env_option_overrides``
+  to the XLA compiler backend.  All keys are optional (``total=False``);
+  only the options you specify will be set.
+  """
+
+  xla_jf_spmd_threshold_for_windowed_einsum_mib: int
+  """Threshold in MiB to trigger windowed einsum in SPMD partitioner."""
+  xla_tpu_enable_windowed_einsum_for_all_gather: bool
+  """Enable windowing for all-gather collectives."""
+  xla_tpu_enable_windowed_einsum_for_reduce_scatter: bool
+  """Enable windowing for reduce-scatter collectives."""
+  xla_tpu_scoped_vmem_limit_kib: int | str
+  """Limit TPU vector memory (VMEM) allocated for scoped variables."""
+  xla_allow_excess_precision: bool
+  """Allow the compiler to use excess floating-point precision."""
+  xla_disable_hlo_passes: str
+  """Comma-separated list of HLO compiler passes to disable."""
+  xla_early_exit_with_layouts: bool
+  """Stop compilation immediately after layout assignment."""
+  xla_tpu_enable_log_recorder: bool | str
+  """Enable TPU execution event log recorder."""
+  xla_enable_transpose_trace: bool | str
+  """Enable print tracing for transpose operations."""
+  xla_dump_to: str
+  """Directory URI (local or GCS) where compiler dumps HLO artifacts."""
+  xla_dump_hlo_as_text: bool
+  """Dump HLO modules in human-readable text format."""
+  xla_dump_hlo_as_proto: bool
+  """Dump HLO modules as serialized protobuf binaries."""
+  fdo_profile: bytes
+  """Feedback-directed optimization profile raw bytes."""
+  sparse_core_config: dict[str, Any]
+  """Configuration dictionary for TPU SparseCore co-processor routing."""
 
 
 # -- Internal types
