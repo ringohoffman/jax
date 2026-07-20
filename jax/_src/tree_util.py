@@ -14,31 +14,33 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 import dataclasses
 import difflib
 import functools
 from functools import cached_property, partial
 import operator as op
 import textwrap
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, TypeAlias, overload
+
+from typing_extensions import TypeGuard, TypeIs
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
 
-
 export = set_module('jax.tree_util')
 
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
+L = TypeVar("L")
 Typ = TypeVar("Typ", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
 
 Leaf = Any
-PyTree = Any
+PyTree: TypeAlias = T | Mapping[Any, "PyTree[T]"] | Sequence["PyTree[T]"]
 PyTreeDef = pytree.PyTreeDef
 
 default_registry = pytree.default_registry()
@@ -245,7 +247,7 @@ def is_tree_node(typ: type) -> bool:
 
 _Children = TypeVar("_Children", bound=Iterable[Any])
 _AuxData = TypeVar("_AuxData", bound=Hashable)
-KeyEntry = TypeVar("KeyEntry", bound=Any)
+KeyEntry = "pytree.KeyPath"
 KeyLeafPair = tuple[KeyEntry, Any]
 KeyLeafPairs = Iterable[KeyLeafPair]
 KeyPath = tuple[KeyEntry, ...]
@@ -1219,6 +1221,34 @@ def register_static(cls: type[H]) -> type[H]:
   return cls
 
 
+@overload
+def tree_flatten_with_path(
+    tree: Any,
+    is_leaf: Callable[[Any], TypeIs[L] | TypeGuard[L]],
+    is_leaf_takes_path: Literal[False] = False,
+) -> tuple[list[tuple[KeyPath, L]], PyTreeDef]: ...
+
+@overload
+def tree_flatten_with_path(
+    tree: Any,
+    is_leaf: Callable[[KeyPath, Any], TypeIs[L] | TypeGuard[L]],
+    is_leaf_takes_path: Literal[True],
+) -> tuple[list[tuple[KeyPath, L]], PyTreeDef]: ...
+
+@overload
+def tree_flatten_with_path(
+    tree: PyTree[T],
+    is_leaf: None = None,
+    is_leaf_takes_path: bool = False,
+) -> tuple[list[tuple[KeyPath, T]], PyTreeDef]: ...
+
+@overload
+def tree_flatten_with_path(
+    tree: Any,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]: ...
+
 @export
 def tree_flatten_with_path(
     tree: Any, is_leaf: Callable[..., bool] | None = None,
@@ -1230,6 +1260,34 @@ def tree_flatten_with_path(
     is_leaf_with_kp = lambda _, x: is_leaf(x)
   return default_registry.flatten_with_path(tree, is_leaf_with_kp)
 
+
+@overload
+def tree_leaves_with_path(
+    tree: Any,
+    is_leaf: Callable[[Any], TypeIs[L] | TypeGuard[L]],
+    is_leaf_takes_path: Literal[False] = False,
+) -> list[tuple[KeyPath, L]]: ...
+
+@overload
+def tree_leaves_with_path(
+    tree: Any,
+    is_leaf: Callable[[KeyPath, Any], TypeIs[L] | TypeGuard[L]],
+    is_leaf_takes_path: Literal[True],
+) -> list[tuple[KeyPath, L]]: ...
+
+@overload
+def tree_leaves_with_path(
+    tree: PyTree[T],
+    is_leaf: None = None,
+    is_leaf_takes_path: bool = False,
+) -> list[tuple[KeyPath, T]]: ...
+
+@overload
+def tree_leaves_with_path(
+    tree: Any,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> list[tuple[KeyPath, Any]]: ...
 
 @export
 def tree_leaves_with_path(

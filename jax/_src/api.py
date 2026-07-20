@@ -2631,7 +2631,7 @@ def clean_up():
   # Shut down distributed system if it exists. Otherwise, this is a no-op.
   distributed.shutdown()
 
-def live_arrays(platform=None):
+def live_arrays(platform=None) -> list[basearray.Array]:
   """Return all live arrays in the backend for `platform`.
 
   If platform is None, it is the default backend.
