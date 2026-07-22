@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import sys
-from typing import Any, Union
+from typing import Any, Union, TYPE_CHECKING
 
 from jax._src import deprecations
 from jax._src.lib import xla_client as xc
@@ -26,10 +26,10 @@ from jax._src.util import use_cpp_class
 import numpy as np
 
 
-# TODO(jakevdp): fix import cycles and define these.
-Device = Any
-Shard = Any
-Sharding = Any
+if TYPE_CHECKING:
+  from jax._src.array import Shard
+  from jax._src.lib.xla_client import Device
+  from jax._src.sharding import Sharding
 
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
