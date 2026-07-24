@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import logging
-from typing import Any
+from typing import Any, TypeVar
 import types
 
 import numpy as np
@@ -50,6 +50,8 @@ from jax._src.tree_util import (
 from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
+
+T = TypeVar('T')
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -891,7 +893,7 @@ def _remat_to_lojax(*hi_args, jaxpr, **kwds):
 remat_p.to_lojax = _remat_to_lojax
 
 
-def checkpoint_name(x, name):
+def checkpoint_name(x: T, name: str) -> T:
   """Identifies a value with a name within :func:`jax.checkpoint`.
 
   This function acts as an identity function at runtime (returning ``x``
