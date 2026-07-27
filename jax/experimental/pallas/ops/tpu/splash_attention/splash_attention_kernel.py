@@ -58,13 +58,24 @@ class SegmentIds(NamedTuple):
   This condition holds for causal self-attention because in this case segment
   ids form a block diagonal matrix so at least one element in each row is set.
   It is easy to break this condition with non-self-attention configurations.
+
+  **Star attention** (shared-prefix packing): Set ``prefix_segment_id`` to
+  the segment id used by the shared prefix (typically 0).  When set, the
+  segment mask becomes ``(kv == prefix_segment_id) | (q == kv)`` so that
+  every query can attend to prefix keys in addition to its own segment.
+  This avoids the need for bitmask encoding (``1 << segment_id``) which
+  silently overflows ``int32`` for segment ids >= 32.
+
   Attributes:
     q: segment ids along the Q sequence
     kv: segment ids along the KV sequence
+    prefix_segment_id: If set, enables star attention masking where all
+      queries also attend to keys with this segment id.
   """
 
   q: jax.Array  # [q_seq_len]
   kv: jax.Array  # [kv_seq_len]
+  prefix_segment_id: int | None = None
 
 
 # Return type of SplashAttention function that implements the custom vjp rule.
@@ -183,9 +194,10 @@ def _attention_reference_default(
   logits = jnp.einsum("sd,td->st", q.astype(jnp.float32), k.astype(jnp.float32))
 
   if segment_ids is not None:
-    mask = jnp.logical_and(
-        mask, segment_ids.q[:, None] == segment_ids.kv[None, :]
-    )
+    seg_mask = segment_ids.q[:, None] == segment_ids.kv[None, :]
+    if segment_ids.prefix_segment_id is not None:
+      seg_mask = seg_mask | (segment_ids.kv[None, :] == segment_ids.prefix_segment_id)
+    mask = jnp.logical_and(mask, seg_mask)
 
   if attn_logits_soft_cap is not None:
     logits = jnp.tanh(logits / attn_logits_soft_cap)
@@ -285,9 +297,10 @@ def _attention_reference_custom_bwd(
     logits = uncapped_logits
 
   if segment_ids is not None:
-    mask = jnp.logical_and(
-        mask, segment_ids.q[:, None] == segment_ids.kv[None, :]
-    )
+    seg_mask = segment_ids.q[:, None] == segment_ids.kv[None, :]
+    if segment_ids.prefix_segment_id is not None:
+      seg_mask = seg_mask | (segment_ids.kv[None, :] == segment_ids.prefix_segment_id)
+    mask = jnp.logical_and(mask, seg_mask)
   logits = jnp.where(mask, logits, mask_value)
 
   p = jnp.exp(logits - logsumexp[..., None])
@@ -608,6 +621,7 @@ def _apply_mask_and_soft_cap(
     bq: int,
     k_in_lanes=True,
     mask_function=None,
+    prefix_segment_id: int | None = None,
 ) -> jax.Array:
   assert mask_ref is None or q_sequence_ref is None
   assert (q_sequence_ref is None) == (mask_function is None)
@@ -675,7 +689,10 @@ def _apply_mask_and_soft_cap(
           kv_segment_ids_ref[k_slice, :], (1, repeats)
       )  # [k_slice, bq]
       q_ids = q_segment_ids_ref[:1, :]  # [1, bq]
-    masks.append(q_ids == kv_ids)
+    seg_mask = q_ids == kv_ids
+    if prefix_segment_id is not None:
+      seg_mask = seg_mask | (kv_ids == prefix_segment_id)
+    masks.append(seg_mask)
 
   def cap_logits(logits):
     if attn_logits_soft_cap is not None:
@@ -725,6 +742,7 @@ def flash_attention_kernel(
     v_layout: QKVLayout,
     attn_logits_soft_cap: float | None,
     mask_function: MaskFunctionType | None,
+    prefix_segment_id: int | None = None,
 ):
   float32 = jnp.float32
   HEAD_DIM_MINOR = QKVLayout.HEAD_DIM_MINOR
@@ -787,6 +805,7 @@ def flash_attention_kernel(
         k_offset=global_kv_index * bkv + kv_compute_index * bkv_compute,
         bq=bq,
         mask_function=mask_function,
+        prefix_segment_id=prefix_segment_id,
     )
 
     qk = apply_mask_and_soft_cap()
@@ -1154,6 +1173,7 @@ def _splash_attention_forward(
             v_layout=v_layout,
             attn_logits_soft_cap=attn_logits_soft_cap,
             mask_function=mask_function,
+            prefix_segment_id=segment_ids.prefix_segment_id if segment_ids is not None else None,
         ),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=num_scalar_prefetch,
@@ -1340,6 +1360,7 @@ def _flash_attention_dq_kernel(
     k_layout: QKVLayout,
     v_layout: QKVLayout,
     mask_function: MaskFunctionType | None,
+    prefix_segment_id: int | None = None,
 ):
   del sinks_ref  # potentially fuse dsinks computation into the kernel later
   float32 = jnp.float32
@@ -1385,6 +1406,7 @@ def _flash_attention_dq_kernel(
         k_offset=global_kv_index * bkv,
         bq=bq,
         mask_function=mask_function,
+        prefix_segment_id=prefix_segment_id,
     )
     p = jnp.exp(qk - logsumexp)
     dp_dims = NT_DIM_NUMBERS if v_layout == HEAD_DIM_MINOR else NN_DIM_NUMBERS
@@ -1625,6 +1647,7 @@ def _splash_attention_bwd_dq(
       k_layout=k_layout,
       v_layout=v_layout,
       mask_function=mask_function,
+      prefix_segment_id=segment_ids.prefix_segment_id if segment_ids is not None else None,
   )
   num_scalar_prefetch = 3
 
@@ -1714,6 +1737,7 @@ def _flash_attention_dkv_kernel(
     v_layout: QKVLayout,
     bkv: int,
     mask_function: MaskFunctionType | None,
+    prefix_segment_id: int | None = None,
 ):
   del sinks_ref  # potentially fuse dsinks computation into the kernel later
   HEAD_DIM_MINOR = QKVLayout.HEAD_DIM_MINOR
@@ -1794,6 +1818,7 @@ def _flash_attention_dkv_kernel(
         bq=bq,
         k_in_lanes=False,
         mask_function=mask_function,
+        prefix_segment_id=prefix_segment_id,
     )
     p = jnp.exp(qk - logsumexp)
     dv = lax.dot(p.astype(do.dtype), do, preferred_element_type=jnp.float32)
@@ -2189,6 +2214,7 @@ def _splash_attention_bwd_dkv(
       v_layout=v_layout,
       bkv=bkv,
       mask_function=mask_function,
+      prefix_segment_id=segment_ids.prefix_segment_id if segment_ids is not None else None,
   )
   num_scalar_prefetch = 3
 
