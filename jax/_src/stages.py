@@ -35,7 +35,17 @@ import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
 import itertools as it
-from typing import Any, NamedTuple, Protocol, TypedDict, Union, runtime_checkable
+from typing import (
+    Any,
+    Generic,
+    NamedTuple,
+    ParamSpec,
+    Protocol,
+    TypedDict,
+    TypeVar,
+    Union,
+    runtime_checkable,
+)
 
 from jax._src import core
 from jax._src import config
@@ -938,8 +948,12 @@ def raise_lo_outs(hi_avals, lo_outs):
   assert next(lo_outs_, None) is None
   return hi_outs
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
 @runtime_checkable
-class Wrapped(Protocol):
+class Wrapped(Generic[P, R], Protocol):
   """A function ready to be traced, lowered, and compiled.
 
   This protocol reflects the output of functions such as
@@ -948,11 +962,11 @@ class Wrapped(Protocol):
   to compilation, and the result compiled prior to execution.
   """
 
-  def __call__(self, *args, **kwargs):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError
 
-  def trace(self, *args, **kwargs) -> Traced:
+  def trace(self, *args: P.args, **kwargs: P.kwargs) -> Traced:
     """Trace this function explicitly for the given arguments.
 
     A traced function is staged out of Python and translated to a jaxpr. It is
@@ -963,7 +977,7 @@ class Wrapped(Protocol):
     """
     raise NotImplementedError
 
-  def lower(self, *args, **kwargs) -> Lowered:
+  def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
     """Lower this function explicitly for the given arguments.
 
     This is a shortcut for ``self.trace(*args, **kwargs).lower()``.
