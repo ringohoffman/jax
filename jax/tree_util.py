@@ -49,6 +49,7 @@ from jax._src.tree_util import (
     SequenceKey as SequenceKey,
     all_leaves as all_leaves,
     default_registry as default_registry,
+    is_pytree_of as is_pytree_of,
     is_tree_node as is_tree_node,
     keystr as keystr,
     register_dataclass as register_dataclass,

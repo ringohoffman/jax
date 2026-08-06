@@ -23,7 +23,7 @@ import operator as op
 import textwrap
 from typing import Any, Literal, TypeVar, TypeAlias, overload
 
-from typing_extensions import TypeGuard, TypeIs
+from typing_extensions import TypeGuard, TypeIs, TypeVarTuple, Unpack
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -35,9 +35,11 @@ export = set_module('jax.tree_util')
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
+R = TypeVar("R")
 L = TypeVar("L")
 Typ = TypeVar("Typ", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
+Ts = TypeVarTuple("Ts")
 
 Leaf = Any
 PyTree: TypeAlias = T | Mapping[Any, "PyTree[T]"] | Sequence["PyTree[T]"]
@@ -84,6 +86,20 @@ _all_registries = (
     tracing_registry,
 )
 
+def is_pytree_of(
+    val: object,
+    leaf_type: type[T],
+) -> TypeIs[PyTree[T]]:
+  """TypeGuard narrowing val to PyTree[T]."""
+  if isinstance(val, leaf_type):
+    return True
+  if isinstance(val, (Mapping, Sequence)) and not isinstance(val, (str, bytes)):
+    if not val:
+      return True
+    elems = val.values() if isinstance(val, Mapping) else val
+    return all(is_pytree_of(v, leaf_type) for v in elems)
+  return False
+
 
 @export
 def tree_flatten(tree: Any,
@@ -98,6 +114,24 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
   """Alias of :func:`jax.tree.unflatten`."""
   return treedef.unflatten(leaves)
 
+
+@overload
+def tree_leaves(
+    tree: PyTree[Any],
+    is_leaf: Callable[[Any], TypeIs[L] | TypeGuard[L]],
+) -> list[L]: ...
+
+@overload
+def tree_leaves(
+    tree: PyTree[L],
+    is_leaf: None = None,
+) -> list[L]: ...
+
+@overload
+def tree_leaves(
+    tree: Any,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> list[Any]: ...
 
 @export
 def tree_leaves(tree: Any,
@@ -384,6 +418,30 @@ def register_pytree_node_class(cls: Typ) -> Typ:
   )
   return cls
 
+
+@overload
+def tree_map(
+    f: Callable[[L, Unpack[Ts]], R],
+    tree: Any,
+    *rest: Unpack[Ts],
+    is_leaf: Callable[[Any], TypeIs[L] | TypeGuard[L]],
+) -> PyTree[R]: ...
+
+@overload
+def tree_map(
+    f: Callable[[T, Unpack[Ts]], R],
+    tree: PyTree[T],
+    *rest: Unpack[Ts],
+    is_leaf: None = None,
+) -> PyTree[R]: ...
+
+@overload
+def tree_map(
+    f: Callable[..., R],
+    tree: Any,
+    *rest: Any,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> PyTree[R]: ...
 
 @export
 def tree_map(f: Callable[..., Any],
@@ -1245,7 +1303,7 @@ def tree_flatten_with_path(
 @overload
 def tree_flatten_with_path(
     tree: Any,
-    is_leaf: Callable[..., bool] | None = None,
+    is_leaf: Callable[..., bool],
     is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]: ...
 
@@ -1299,14 +1357,50 @@ def tree_leaves_with_path(
 generate_key_paths = tree_leaves_with_path
 
 
-@export
+@overload
 def tree_map_with_path(
-    f: Callable[..., Any],
+    f: Callable[[KeyPath, L, Unpack[Ts]], R],
+    tree: Any,
+    *rest: Unpack[Ts],
+    is_leaf: Callable[[Any], TypeIs[L] | TypeGuard[L]],
+    is_leaf_takes_path: Literal[False] = False,
+) -> PyTree[R]: ...
+
+@overload
+def tree_map_with_path(
+    f: Callable[[KeyPath, L, Unpack[Ts]], R],
+    tree: Any,
+    *rest: Unpack[Ts],
+    is_leaf: Callable[[KeyPath, Any], TypeIs[L] | TypeGuard[L]],
+    is_leaf_takes_path: Literal[True],
+) -> PyTree[R]: ...
+
+@overload
+def tree_map_with_path(
+    f: Callable[[KeyPath, T, Unpack[Ts]], R],
+    tree: PyTree[T],
+    *rest: Unpack[Ts],
+    is_leaf: None = None,
+    is_leaf_takes_path: bool = False,
+) -> PyTree[R]: ...
+
+@overload
+def tree_map_with_path(
+    f: Callable[..., R],
     tree: Any,
     *rest: Any,
     is_leaf: Callable[..., bool] | None = None,
     is_leaf_takes_path: bool = False,
-) -> Any:
+) -> PyTree[R]: ...
+
+@export
+def tree_map_with_path(
+    f: Callable[..., R],
+    tree: Any,
+    *rest: Unpack[Ts],
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> PyTree[R]:
   """Alias of :func:`jax.tree.map_with_path`."""
   keypath_leaves, treedef = tree_flatten_with_path(
       tree, is_leaf, is_leaf_takes_path
