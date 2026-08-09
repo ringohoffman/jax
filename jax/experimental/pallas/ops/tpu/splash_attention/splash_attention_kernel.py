@@ -78,6 +78,15 @@ class SegmentIds(NamedTuple):
   prefix_segment_id: int | None = None
 
 
+tree_util.register_pytree_node(
+    SegmentIds,
+    lambda s: ((s.q, s.kv), s.prefix_segment_id),
+    lambda aux, children: SegmentIds(
+        children[0], children[1], prefix_segment_id=aux
+    ),
+)
+
+
 # Return type of SplashAttention function that implements the custom vjp rule.
 SplashCustomReturnType = Union[
     # out, no residuals
