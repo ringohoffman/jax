@@ -2353,7 +2353,7 @@ def _device_get(x):
   else:
     return toarray()
 
-def device_get(x: Any):
+def device_get(x: T) -> T:
   """Transfer ``x`` to host.
 
   If ``x`` is a pytree, then the individual buffers are copied in parallel.
