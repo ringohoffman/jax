@@ -23,7 +23,7 @@ import operator as op
 import textwrap
 from typing import Any, Literal, TypeVar, TypeAlias, overload
 
-from typing_extensions import TypeGuard, TypeIs, TypeVarTuple, Unpack
+from typing_extensions import TypeGuard, TypeIs, Unpack
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -35,11 +35,11 @@ export = set_module('jax.tree_util')
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
+T2 = TypeVar("T2")
 R = TypeVar("R")
 L = TypeVar("L")
 Typ = TypeVar("Typ", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
-Ts = TypeVarTuple("Ts")
 
 Leaf = Any
 PyTree: TypeAlias = T | Mapping[Any, "PyTree[T]"] | Sequence["PyTree[T]"]
@@ -1359,36 +1359,55 @@ generate_key_paths = tree_leaves_with_path
 
 @overload
 def tree_map_with_path(
-    f: Callable[[KeyPath, L, Unpack[Ts]], R],
-    tree: Any,
-    *rest: Unpack[Ts],
+    f: Callable[[KeyPath, L, Unpack[tuple[Any, ...]]], R],
+    tree: PyTree[Any],
+    *rest: Unpack[tuple[PyTree[Any], ...]],
     is_leaf: Callable[[Any], TypeIs[L] | TypeGuard[L]],
     is_leaf_takes_path: Literal[False] = False,
 ) -> PyTree[R]: ...
 
 @overload
 def tree_map_with_path(
-    f: Callable[[KeyPath, L, Unpack[Ts]], R],
-    tree: Any,
-    *rest: Unpack[Ts],
+    f: Callable[[KeyPath, L, Unpack[tuple[Any, ...]]], R],
+    tree: PyTree[Any],
+    *rest: Unpack[tuple[PyTree[Any], ...]],
     is_leaf: Callable[[KeyPath, Any], TypeIs[L] | TypeGuard[L]],
     is_leaf_takes_path: Literal[True],
 ) -> PyTree[R]: ...
 
 @overload
 def tree_map_with_path(
-    f: Callable[[KeyPath, T, Unpack[Ts]], R],
+    f: Callable[[KeyPath, T, Unpack[tuple[Any, ...]]], R],
     tree: PyTree[T],
-    *rest: Unpack[Ts],
+    *rest: Unpack[tuple[PyTree[Any], ...]],
     is_leaf: None = None,
     is_leaf_takes_path: bool = False,
 ) -> PyTree[R]: ...
 
 @overload
 def tree_map_with_path(
-    f: Callable[..., R],
-    tree: Any,
-    *rest: Any,
+    f: Callable[[KeyPath, T], R],
+    tree: PyTree[T],
+    *,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> PyTree[R]: ...
+
+@overload
+def tree_map_with_path(
+    f: Callable[[KeyPath, T, T2], R],
+    tree: PyTree[T],
+    other: PyTree[T2],
+    *,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> PyTree[R]: ...
+
+@overload
+def tree_map_with_path(
+    f: Callable[[KeyPath, Unpack[tuple[Any, ...]]], R],
+    tree: PyTree[Any],
+    *rest: Unpack[tuple[PyTree[Any], ...]],
     is_leaf: Callable[..., bool] | None = None,
     is_leaf_takes_path: bool = False,
 ) -> PyTree[R]: ...
@@ -1396,8 +1415,8 @@ def tree_map_with_path(
 @export
 def tree_map_with_path(
     f: Callable[..., R],
-    tree: Any,
-    *rest: Unpack[Ts],
+    tree: PyTree[Any],
+    *rest: Unpack[tuple[PyTree[Any], ...]],
     is_leaf: Callable[..., bool] | None = None,
     is_leaf_takes_path: bool = False,
 ) -> PyTree[R]:
