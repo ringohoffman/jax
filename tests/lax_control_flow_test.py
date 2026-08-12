@@ -3501,6 +3501,326 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     g, = h_vjp(1.0)
     self.assertAllClose(g, jnp.cos(1.), check_dtypes=False)
 
+  # ---- _split_transpose tests ----
+
+  def _assert_split_transpose_grads_match(self, fn_factory, *args, argnums=1, atol=1e-5):
+    fn_default = fn_factory(split=False)
+    fn_split = fn_factory(split=True)
+    grad_default = jax.grad(fn_default, argnums=argnums)(*args)
+    grad_split = jax.grad(fn_split, argnums=argnums)(*args)
+    for d, s in zip(tree_util.tree_leaves(grad_default),
+                    tree_util.tree_leaves(grad_split)):
+      self.assertAllClose(d, s, check_dtypes=False, atol=atol)
+
+  def test_scan_split_transpose_linear_body(self):
+    key = random.key(0)
+    params = random.normal(key, (6, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_nonlinear_body_gelu(self):
+    key = random.key(1)
+    params = random.normal(key, (4, 32, 32)) * 0.1
+    x = random.normal(key, (2, 32))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jax.nn.gelu(jnp.dot(c, p)), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x, atol=1e-4)
+
+  def test_scan_split_transpose_body_with_checkpoint(self):
+    key = random.key(2)
+    params = random.normal(key, (5, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return jax.checkpoint(
+              lambda p, c: c + jnp.dot(c, p)
+          )(p, c), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_checkpoint_with_custom_policy(self):
+    key = random.key(3)
+    params = random.normal(key, (4, 16, 16)) * 0.1
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return jax.checkpoint(
+              lambda p, c: c + jax.nn.gelu(jnp.dot(c, p)),
+              policy=checkpoint_policies.dots_saveable,
+          )(p, c), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x, atol=1e-4)
+
+  def test_scan_split_transpose_with_outputs(self):
+    key = random.key(4)
+    params = random.normal(key, (6, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          out = c + jnp.dot(c, p)
+          return out, out
+        c, ys = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum() + ys.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_reverse(self):
+    key = random.key(5)
+    params = random.normal(key, (6, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p), None
+        c, _ = lax.scan(body, x, params,
+                        reverse=True, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_pytree_carry(self):
+    key = random.key(6)
+    params = random.normal(key, (4, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(carry, p):
+          h = carry['h'] + jnp.dot(carry['x'], p)
+          return {'x': carry['x'] + h, 'h': h}, None
+        init = {'x': x, 'h': jnp.zeros_like(x)}
+        c, _ = lax.scan(body, init, params, _split_transpose=split)
+        return c['x'].sum() + c['h'].sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_closed_over_constants(self):
+    key = random.key(7)
+    params = random.normal(key, (4, 16, 16))
+    x = random.normal(key, (2, 16))
+    bias = random.normal(key, (1, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p) + bias, None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_param_gradient(self):
+    key = random.key(8)
+    params = random.normal(key, (4, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x, argnums=0)
+
+  def test_scan_split_transpose_gradient_both_argnums(self):
+    key = random.key(9)
+    params = random.normal(key, (4, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x, argnums=(0, 1))
+
+  def test_scan_split_transpose_length_one(self):
+    key = random.key(10)
+    params = random.normal(key, (1, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_nested_scan(self):
+    key = random.key(11)
+    params = random.normal(key, (4, 3, 8, 8))
+    x = random.normal(key, (2, 8))
+    def factory(split):
+      def fn(params, x):
+        def outer_body(carry, group_params):
+          def inner_body(c, p):
+            return c + jnp.dot(c, p), None
+          c, _ = lax.scan(inner_body, carry, group_params,
+                          _split_transpose=split)
+          return c, None
+        c, _ = lax.scan(outer_body, x, params,
+                        _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x, atol=1e-4)
+
+  def test_scan_split_transpose_unroll(self):
+    key = random.key(12)
+    params = random.normal(key, (8, 16, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jnp.dot(c, p), None
+        c, _ = lax.scan(body, x, params,
+                        unroll=2, _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, params, x)
+
+  def test_scan_split_transpose_value_and_grad(self):
+    key = random.key(13)
+    params = random.normal(key, (4, 16, 16))
+    x = random.normal(key, (2, 16))
+    def fn(params, x, split):
+      def body(c, p):
+        return c + jnp.dot(c, p), None
+      c, _ = lax.scan(body, x, params, _split_transpose=split)
+      return c.sum()
+    val_d, grad_d = jax.value_and_grad(fn, argnums=1)(params, x, False)
+    val_s, grad_s = jax.value_and_grad(fn, argnums=1)(params, x, True)
+    self.assertAllClose(val_d, val_s, check_dtypes=False)
+    self.assertAllClose(grad_d, grad_s, check_dtypes=False, atol=1e-5)
+
+  def test_scan_split_transpose_second_order_gradient(self):
+    key = random.key(14)
+    params = random.normal(key, (3, 8, 8)) * 0.1
+    x = random.normal(key, (2, 8))
+    def fn(params, x, split):
+      def body(c, p):
+        return c + jnp.dot(c, p), None
+      c, _ = lax.scan(body, x, params, _split_transpose=split)
+      return c.sum()
+    def grad_fn(params, x, split):
+      return jax.grad(fn, argnums=1)(params, x, split).sum()
+    hess_d = jax.grad(grad_fn, argnums=1)(params, x, False)
+    hess_s = jax.grad(grad_fn, argnums=1)(params, x, True)
+    self.assertAllClose(hess_d, hess_s, check_dtypes=False, atol=1e-3)
+
+  def test_scan_split_transpose_multiple_scan_inputs(self):
+    key = random.key(15)
+    w1 = random.normal(key, (4, 16, 16))
+    w2 = random.normal(key, (4, 1, 16))
+    x = random.normal(key, (2, 16))
+    def factory(split):
+      def fn(w1, w2, x):
+        def body(c, inputs):
+          p, b = inputs
+          return c + jnp.dot(c, p) + b, None
+        c, _ = lax.scan(body, x, (w1, w2), _split_transpose=split)
+        return c.sum()
+      return fn
+    self._assert_split_transpose_grads_match(factory, w1, w2, x, argnums=2)
+
+  def test_scan_split_transpose_reduces_activation_residuals_in_hlo(self):
+    N, batch, dim = 8, 4, 16
+    key = random.key(0)
+    params = random.normal(key, (N, dim, dim))
+    x = random.normal(key, (batch, dim))
+
+    def make_fn(split):
+      def fn(params, x):
+        def body(c, p):
+          h = jnp.dot(c, p)
+          return c + jax.nn.gelu(h), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+
+    hlo_default = jax.jit(jax.grad(make_fn(False), argnums=1)).lower(params, x).as_text()
+    hlo_split = jax.jit(jax.grad(make_fn(True), argnums=1)).lower(params, x).as_text()
+
+    act_default = len(re.findall(rf'tensor<{N}x{batch}x[^>]+>', hlo_default))
+    act_split = len(re.findall(rf'tensor<{N}x{batch}x[^>]+>', hlo_split))
+
+    self.assertGreater(act_default, act_split,
+        f"_split_transpose must strictly reduce activation accumulator "
+        f"refs. Default={act_default}, Split={act_split}")
+
+  def test_scan_split_transpose_weight_refs_unchanged(self):
+    N, batch, dim = 8, 4, 16
+    key = random.key(0)
+    params = random.normal(key, (N, dim, dim))
+    x = random.normal(key, (batch, dim))
+
+    def make_fn(split):
+      def fn(params, x):
+        def body(c, p):
+          return c + jax.nn.gelu(jnp.dot(c, p)), None
+        c, _ = lax.scan(body, x, params, _split_transpose=split)
+        return c.sum()
+      return fn
+
+    hlo_default = jax.jit(jax.grad(make_fn(False), argnums=1)).lower(params, x).as_text()
+    hlo_split = jax.jit(jax.grad(make_fn(True), argnums=1)).lower(params, x).as_text()
+
+    wt_default = len(re.findall(rf'tensor<{N}x{dim}x[^>]+>', hlo_default))
+    wt_split = len(re.findall(rf'tensor<{N}x{dim}x[^>]+>', hlo_split))
+
+    self.assertEqual(wt_default, wt_split,
+        f"Weight tensor refs should be unchanged. "
+        f"Default={wt_default}, Split={wt_split}")
+
+  def test_scan_split_transpose_matches_manual_nothing_saveable(self):
+    N, batch, dim = 8, 4, 16
+    key = random.key(0)
+    params = random.normal(key, (N, dim, dim))
+    x = random.normal(key, (batch, dim))
+
+    def fn_split(params, x):
+      def body(c, p):
+        return c + jax.nn.gelu(jnp.dot(c, p)), None
+      c, _ = lax.scan(body, x, params, _split_transpose=True)
+      return c.sum()
+
+    def fn_manual(params, x):
+      def body(c, p):
+        return jax.checkpoint(
+            lambda c, p: c + jax.nn.gelu(jnp.dot(c, p)),
+            policy=checkpoint_policies.nothing_saveable(),
+        )(c, p), None
+      c, _ = lax.scan(body, x, params, _split_transpose=False)
+      return c.sum()
+
+    hlo_split = jax.jit(jax.grad(fn_split, argnums=1)).lower(params, x).as_text()
+    hlo_manual = jax.jit(jax.grad(fn_manual, argnums=1)).lower(params, x).as_text()
+
+    act_split = len(re.findall(rf'tensor<{N}x{batch}x[^>]+>', hlo_split))
+    act_manual = len(re.findall(rf'tensor<{N}x{batch}x[^>]+>', hlo_manual))
+
+    self.assertEqual(act_split, act_manual,
+        f"_split_transpose should match manual nothing_saveable. "
+        f"Split={act_split}, Manual={act_manual}")
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

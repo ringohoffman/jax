@@ -352,6 +352,19 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if not callable(f):
     raise TypeError("lax.scan: f argument should be a callable.")
 
+  # When _split_transpose is True, wrap the scan body with
+  # jax.checkpoint(nothing_saveable) so that the scan's backward pass
+  # recomputes internal body values per-iteration from the carry and scanned
+  # inputs, rather than accumulating them into [N, ...]-shaped residual
+  # buffers.  This trades extra forward recomputation during backward for
+  # O(N × body_residual_size) memory savings.
+  if _split_transpose:
+    _original_f = f
+    @partial(ad_checkpoint.checkpoint,
+             policy=ad_checkpoint.nothing_saveable())
+    def f(carry, x):
+      return _original_f(carry, x)
+
   dbg_body = api_util.debug_info("scan", f, (init, xs), {})
   init_flat = FlatTree.flatten(init)
   xs_flat = FlatTree.flatten(xs)
